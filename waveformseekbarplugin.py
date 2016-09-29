@@ -9,7 +9,7 @@ import contextlib
 
 from gi.repository import GObject, Gtk, Gdk, Gst
 
-from quodlibet import app
+from quodlibet import app, config
 from quodlibet.plugins.events import EventPlugin
 from quodlibet.qltk import Icons, Align
 from quodlibet.qltk.seekbutton import TimeLabel
@@ -41,14 +41,18 @@ class WaveformSeekBar(Gtk.Box):
 
         connect_destroy(player, 'seek', self._on_player_seek)
         connect_destroy(player, 'song-started', self._on_song_started)
-        connect_destroy(player, "notify::seekable", self._on_seekable_changed)
-        connect_destroy(library, "changed", self._on_song_changed, player)
+        connect_destroy(player, 'notify::seekable', self._on_seekable_changed)
+        connect_destroy(library, 'changed', self._on_song_changed, player)
 
-        self.connect("destroy", self._on_destroy)
+        self.connect('destroy', self._on_destroy)
         self._update(player)
         self._tracker.tick()
 
     def _create_waveform(self, file):
+        # Close any existing pipelines to avoid warnings
+        if hasattr(self, "_pipeline") and self._pipeline:
+            self._pipeline.set_state(Gst.State.NULL)
+
         command_template = 'filesrc location="{}" ! decodebin ! level name=audiolevel interval=100000000 post-messages=true ! fakesink sync=false'
         command = command_template.format(file)
         pipeline = Gst.parse_launch(command)
@@ -67,7 +71,7 @@ class WaveformSeekBar(Gtk.Box):
             error, debug = message.parse_error()
             print("Error received from element {name}: {error}".format(
                 name=message.src.get_name(), error=error))
-            print("Debugging information: %s" % debug)
+            print("Debugging information: {}".format(debug))
         elif message.type == Gst.MessageType.ELEMENT:
             structure = message.get_structure()
             if(structure.get_name() == "level"):
@@ -78,12 +82,11 @@ class WaveformSeekBar(Gtk.Box):
                 rms = pow(10, (rms_dB_avg / 20))
                 self._rms_vals.append(rms)
             else:
+                # Shouldn't happen
                 print("Not Level")
         elif message.type == Gst.MessageType.EOS:
             self._pipeline.set_state(Gst.State.NULL)
             self._waveform_scale.update(self._rms_vals, self._player)
-        # else:
-        #     print("Received message of type: {}".format(message.type))
 
     def _on_destroy(self, *args):
         self._tracker.destroy()
@@ -107,7 +110,7 @@ class WaveformSeekBar(Gtk.Box):
 
     def _update(self, player):
         if player.info:
-            # Positions is in ms
+            # Position in ms, length in seconds
             position = player.get_position() / 1000
             length = (player.info("~#length"))
             remaining = length - position
@@ -157,17 +160,14 @@ class WaveformScale(Gtk.Widget):
         ratio_width = value_count / float(width)
         ratio_height = max_value / float(height)
 
+        elapsed_color = Gdk.RGBA()
+        elapsed_color.parse(get_fg_color())
+
+        remaining_color = self.get_style_context().get_color(Gtk.StateFlags.SELECTED)
+
         # Draw the waveform
         for x in range(width):
-
-            if x < self.position * width:
-                # The elapsed part of the song
-                fg_color = Gdk.RGBA()
-                # TODO: make this configurable
-                fg_color.parse("#ff5500")
-            else:
-                # The remaining part
-                fg_color = self.get_style_context().get_color(Gtk.StateFlags.SELECTED)
+            fg_color = elapsed_color if x < self.position * width else remaining_color
 
             cr.set_source_rgba(*list(fg_color))
 
@@ -210,12 +210,24 @@ class WaveformScale(Gtk.Widget):
         self.queue_draw()
 
 
+def get_fg_color():
+    default = "#ff5522"
+    color = config.get("plugins", __name__, default)
+
+    return color
+
+
+def set_fg_color(color):
+    config.set("plugins", __name__, color)
+
+
 class WaveformSeekBarPlugin(EventPlugin):
     """ The plugin class. """
 
     PLUGIN_ID = "WaveformSeekBar"
     PLUGIN_NAME = _("Waveform Seek Bar")
-    PLUGIN_DESC = _("A seekbar in the shape of the waveform of the current song.")
+    PLUGIN_DESC = _(
+        "A seekbar in the shape of the waveform of the current song.")
 
     def enabled(self):
         self._bar = WaveformSeekBar(app.player, app.librarian)
@@ -226,3 +238,31 @@ class WaveformSeekBarPlugin(EventPlugin):
         app.window.set_seekbar_widget(None)
         self._bar.destroy()
         del self._bar
+
+    def PluginPreferences(self, parent):
+        red = Gdk.RGBA()
+        red.parse("#ff0000")
+
+        def changed(entry):
+            text = entry.get_text()
+
+            elapsed_color = Gdk.RGBA()
+            elapsed_color.parse(get_fg_color())
+
+            if not Gdk.RGBA().parse(text):
+                # Invalid color, make text red
+                entry.override_color(Gtk.StateFlags.NORMAL, red)
+            else:
+                # Reset text color
+                entry.override_color(Gtk.StateFlags.NORMAL, None)
+                set_fg_color(text)
+
+        hbox = Gtk.HBox(spacing=6)
+        hbox.set_border_width(6)
+        hbox.pack_start(
+            Gtk.Label(label=_("Foreground Color:")), False, True, 0)
+        entry = Gtk.Entry()
+        entry.set_text(get_fg_color())
+        entry.connect('changed', changed)
+        hbox.pack_start(entry, True, True, 0)
+        return hbox
