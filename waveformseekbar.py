@@ -12,7 +12,7 @@ from quodlibet.plugins.events import EventPlugin
 from quodlibet.qltk import Align
 from quodlibet.qltk.seekbutton import TimeLabel
 from quodlibet.qltk.tracker import TimeTracker
-from quodlibet.util import connect_destroy
+from quodlibet.util import connect_destroy, print_d
 
 
 class WaveformSeekBar(Gtk.Box):
@@ -71,9 +71,9 @@ class WaveformSeekBar(Gtk.Box):
     def _on_bus_message(self, bus, message):
         if message.type == Gst.MessageType.ERROR:
             error, debug = message.parse_error()
-            print("Error received from element {name}: {error}".format(
+            print_d("Error received from element {name}: {error}".format(
                 name=message.src.get_name(), error=error))
-            print("Debugging information: {}".format(debug))
+            print_d("Debugging information: {}".format(debug))
         elif message.type == Gst.MessageType.ELEMENT:
             structure = message.get_structure()
             if(structure.get_name() == "level"):
@@ -85,7 +85,7 @@ class WaveformSeekBar(Gtk.Box):
                 self._rms_vals.append(rms)
             else:
                 # Shouldn't happen
-                print("Not Level")
+                print_d("Not Level")
         elif message.type == Gst.MessageType.EOS:
             self._pipeline.set_state(Gst.State.NULL)
             self._waveform_scale.update(self._rms_vals, self._player)
@@ -129,10 +129,8 @@ class WaveformSeekBar(Gtk.Box):
             self.set_sensitive(player.seekable)
 
 
-class WaveformScale(Gtk.Widget):
+class WaveformScale(Gtk.EventBox):
     """ The waveform widget. """
-
-    # __gtype_name__ = 'WaveformScale'
 
     _rms_vals = []
 
@@ -149,7 +147,11 @@ class WaveformScale(Gtk.Widget):
     def do_draw(self, cr):
         # Paint the background
         context = self.get_style_context()
-        bg_color = context.get_background_color(Gtk.StateFlags.NORMAL)
+        context.save()
+        context.set_state(Gtk.StateFlags.NORMAL)
+        bg_color = context.get_background_color(context.get_state())
+        context.restore()
+
         cr.set_source_rgba(*list(bg_color))
         cr.paint()
         cr.set_line_width(2)
@@ -169,7 +171,10 @@ class WaveformScale(Gtk.Widget):
         elapsed_color = Gdk.RGBA()
         elapsed_color.parse(get_fg_color())
 
-        remaining_color = context.get_color(Gtk.StateFlags.SELECTED)
+        context.save()
+        context.set_state(Gtk.StateFlags.SELECTED)
+        remaining_color = context.get_color(context.get_state())
+        context.restore()
 
         # Draw the waveform
         for x in range(width):
@@ -189,24 +194,6 @@ class WaveformScale(Gtk.Widget):
 
             cr.stroke()
 
-    def do_realize(self):
-        allocation = self.get_allocation()
-        attr = Gdk.WindowAttr()
-        attr.window_type = Gdk.WindowType.CHILD
-        attr.x = allocation.x
-        attr.y = allocation.y
-        attr.width = allocation.width
-        attr.height = allocation.height
-        attr.visual = self.get_visual()
-        attr.event_mask = self.get_events() | Gdk.EventMask.BUTTON_PRESS_MASK
-        WAT = Gdk.WindowAttributesType
-        mask = WAT.X | WAT.Y | WAT.VISUAL
-        window = Gdk.Window(self.get_parent_window(), attr, mask)
-        self.set_window(window)
-        self.register_window(window)
-        self.set_realized(True)
-        window.set_background_pattern(None)
-
     def do_button_press_event(self, event):
         # Left mouse button
         if event.button == 1:
@@ -224,7 +211,6 @@ def get_fg_color():
     color = config.get("plugins", __name__, default)
 
     return color
-
 
 def set_fg_color(color):
     config.set("plugins", __name__, color)
