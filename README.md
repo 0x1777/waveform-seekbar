@@ -1,3 +1,5 @@
+An improved version of this plugin has since been merged into QuodLibet. So, you know, just ignore this.
+
 #Installation
 1. Copy `waveformseekbarplugin.py` to `~/.quodlibet/plugins/`
 2. Restart QuodLibet
